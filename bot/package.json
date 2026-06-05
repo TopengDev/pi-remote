@@ -1,0 +1,8 @@
+{
+  "name": "pi-remote-bot",
+  "private": true,
+  "dependencies": {
+    "grammy": "^1.30.0",
+    "ws": "^8.16.0"
+  }
+}

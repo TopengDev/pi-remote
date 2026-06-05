@@ -1,0 +1,20 @@
+services:
+  attn:
+    build: ./attn-core
+    container_name: pi-remote-attn
+    volumes:
+      - attn_data:/root/.attn
+    restart: unless-stopped
+
+  bot:
+    build: ./bot
+    container_name: pi-remote-bot
+    depends_on:
+      - attn
+    network_mode: "service:attn"
+    env_file:
+      - .env
+    restart: unless-stopped
+
+volumes:
+  attn_data:
