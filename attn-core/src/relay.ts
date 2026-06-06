@@ -84,7 +84,7 @@ let whisperPipeline: any = null;
 async function getWhisperPipeline(): Promise<any> {
   if (!whisperPipeline) {
     const { pipeline } = await import('@xenova/transformers');
-    whisperPipeline = await pipeline('automatic-speech-recognition', 'Xenova/whisper-base.en');
+    whisperPipeline = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small.en');
     process.stderr.write('attn: whisper pipeline initialized\n');
   }
   return whisperPipeline;
@@ -390,10 +390,23 @@ export function connectToRelay(
                     const { OggOpusDecoder } = await import('ogg-opus-decoder');
                     const decoder = new OggOpusDecoder();
                     await decoder.ready;
-                    const { channelData } = await decoder.decodeFile(decrypted);
+                    const { channelData, samplesDecoded, sampleRate } = await decoder.decodeFile(decrypted);
                     decoder.free();
+                    
+                    // Resample from 48kHz to 16kHz (Whisper expects 16kHz)
+                    const ratio = 16000 / sampleRate;
+                    const newLen = Math.floor(samplesDecoded * ratio);
+                    const audioData = new Float32Array(newLen);
+                    for (let i = 0; i < newLen; i++) {
+                      const srcIdx = i / ratio;
+                      const srcFloor = Math.floor(srcIdx);
+                      const srcCeil = Math.min(srcFloor + 1, samplesDecoded - 1);
+                      const t = srcIdx - srcFloor;
+                      audioData[i] = channelData[0][srcFloor] * (1 - t) + channelData[0][srcCeil] * t;
+                    }
+                    
                     const transcriber = await getWhisperPipeline();
-                    const result = await transcriber(channelData[0]);
+                    const result = await transcriber(audioData);
                     fileMsg += `\n🎤 "${result.text}"`;
                   } catch (e) {
                     process.stderr.write(`attn: whisper transcription failed: ${e instanceof Error ? e.message : String(e)}\n`);
