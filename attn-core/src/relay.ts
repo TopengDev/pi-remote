@@ -78,6 +78,18 @@ let currentOnInbound: OnInbound | null = null;
 
 const keyTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
+// --- Whisper pipeline (lazy-loaded singleton) ---
+let whisperPipeline: any = null;
+
+async function getWhisperPipeline(): Promise<any> {
+  if (!whisperPipeline) {
+    const { pipeline } = await import('@xenova/transformers');
+    whisperPipeline = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en');
+    process.stderr.write('attn: whisper pipeline initialized\n');
+  }
+  return whisperPipeline;
+}
+
 // --- Helpers ---
 
 function teardownWsState(): void {
@@ -367,6 +379,25 @@ export function connectToRelay(
                 let fileMsg = `📎 File received: ${parsed.file.filename} (${sizeKB} KB)\nSaved to: ${savePath}`;
                 if (parsed.file.caption) {
                   fileMsg += `\n📝 ${parsed.file.caption}`;
+                }
+
+                // Voice note transcription via Whisper
+                const isVoice = parsed.file.type === 'voice' ||
+                                parsed.file.filename?.endsWith('.ogg') ||
+                                parsed.file.filename?.startsWith('voice_');
+                if (isVoice) {
+                  try {
+                    const { OggOpusDecoder } = await import('ogg-opus-decoder');
+                    const decoder = new OggOpusDecoder();
+                    await decoder.ready;
+                    const { channelData } = await decoder.decodeFile(decrypted);
+                    decoder.free();
+                    const transcriber = await getWhisperPipeline();
+                    const result = await transcriber({ sampling_rate: 48000, raw: channelData[0] });
+                    fileMsg += `\n🎤 "${result.text}"`;
+                  } catch (e) {
+                    process.stderr.write(`attn: whisper transcription failed: ${e instanceof Error ? e.message : String(e)}\n`);
+                  }
                 }
                 broadcastInbound({
                   type: 'message',

@@ -130,6 +130,42 @@ async function main() {
     }
   });
 
+  // Voice note handler
+  bot.on('message:voice', async (ctx) => {
+    if (ctx.from.id !== SUPERUSER) return ctx.reply('Access denied.');
+
+    const ack = await ctx.reply('🎤 Downloading voice note...');
+    try {
+      const voice = ctx.message.voice;
+      const file = await ctx.api.getFile(voice.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
+
+      const response = await fetch(fileUrl);
+      const arrayBuf = await response.arrayBuffer();
+      const base64 = Buffer.from(arrayBuf).toString('base64');
+
+      const filename = `voice_${Date.now()}.ogg`;
+      const { status, body } = await attnPost('/send-file', {
+        to: PI_ADDRESS,
+        filename,
+        data: base64,
+        type: 'voice',
+      });
+
+      if (status === 200) {
+        await ctx.api.editMessageText(ack.chat.id, ack.message_id,
+          '🎤 Voice note sent to pi\nID: <code>' + body.id + '</code>',
+          { parse_mode: 'HTML' });
+      } else {
+        await ctx.api.editMessageText(ack.chat.id, ack.message_id,
+          '❌ ' + (body.error || 'Upload failed'), { parse_mode: 'HTML' });
+      }
+    } catch (e) {
+      await ctx.api.editMessageText(ack.chat.id, ack.message_id,
+        '❌ ' + e.message, { parse_mode: 'HTML' });
+    }
+  });
+
   // Document handler
   bot.on('message:document', async (ctx) => {
     if (ctx.from.id !== SUPERUSER) return ctx.reply('Access denied.');
