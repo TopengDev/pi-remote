@@ -1,7 +1,11 @@
 import WebSocket from 'ws';
 import type { RawData } from 'ws';
 import { state, isRelayReady } from './state.js';
-import { decryptMessage, verifyEnvelope } from './crypto.js';
+import { decryptMessage, verifyEnvelope, decryptBinary } from './crypto.js';
+import { broadcastInbound } from './server.js';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { saveMessage, isContact, isBlocked, getContactName, savePending, hasPendingNotified, markPendingNotified, getOutbox, deleteOutbox, incrementOutboxAttempts, saveKeyCache, getKeyCache, saveReaction, updateContactName } from './db.js';
 
 // --- Types (same protocol as upstream) ---
@@ -38,6 +42,16 @@ type ServerMessage =
   | { type: 'received'; id: string }
   | { type: 'delivered'; id: string }
   | { type: 'delivery_status'; id: string; to: string; status: 'delivered' | 'queued'; recipient_state?: 'online' | 'away'; recipient_message?: string | null }
+  | {
+      type: 'file';
+      id: string;
+      from: string;
+      from_name?: string;
+      url: string;
+      key: string;
+      filename: string;
+      ts: number;
+    }
   | { type: 'error'; error: string };
 
 type OnInbound = (
@@ -438,6 +452,67 @@ export function connectToRelay(
       case 'received':
       case 'delivered':
       case 'delivery_status':
+        break;
+
+      case 'file': {
+        try {
+          if (isBlocked(msg.from)) {
+            ws.send(JSON.stringify({ type: 'ack', id: msg.id }));
+            break;
+          }
+          if (!isContact(msg.from)) {
+            ws.send(JSON.stringify({ type: 'ack', id: msg.id }));
+            break;
+          }
+
+          // Download encrypted file from relay
+          const downloadUrl = `https://attn.s0nderlabs.xyz/files/${msg.key}`;
+          const fileRes = await fetch(downloadUrl);
+          if (!fileRes.ok) {
+            process.stderr.write(
+              `attn: file download failed for ${msg.key}: HTTP ${fileRes.status}\n`,
+            );
+            ws.send(JSON.stringify({ type: 'ack', id: msg.id }));
+            break;
+          }
+
+          const encryptedData = new Uint8Array(await fileRes.arrayBuffer());
+
+          // Decrypt with our private key
+          const decrypted = decryptBinary(state.privateKey, encryptedData);
+
+          // Save to /tmp
+          const savePath = join(tmpdir(), msg.filename);
+          writeFileSync(savePath, decrypted);
+
+          ws.send(JSON.stringify({ type: 'ack', id: msg.id }));
+
+          const agentName = syncContactName(msg.from, msg.from_name);
+
+          // Broadcast file notification to pi extensions
+          broadcastInbound({
+            type: 'file',
+            from: msg.from,
+            filename: msg.filename,
+            path: savePath,
+            size: decrypted.length,
+            id: msg.id,
+            ts: msg.ts,
+            agentName: agentName ?? undefined,
+          });
+        } catch (err) {
+          process.stderr.write(
+            `attn: file processing error: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+          try {
+            ws.send(JSON.stringify({ type: 'ack', id: msg.id }));
+          } catch {
+            // ignore
+          }
+        }
+        break;
+      }
+
       case 'error':
         break;
     }

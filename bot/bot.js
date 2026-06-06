@@ -94,6 +94,77 @@ async function main() {
     } catch (e) { await ctx.reply("❌ attn daemon unreachable: " + e.message); }
   });
 
+  // Photo handler
+  bot.on('message:photo', async (ctx) => {
+    if (ctx.from.id !== SUPERUSER) return ctx.reply('Access denied.');
+
+    const ack = await ctx.reply('📎 Downloading photo...');
+    try {
+      const photo = ctx.message.photo[ctx.message.photo.length - 1];
+      const file = await ctx.api.getFile(photo.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
+
+      const response = await fetch(fileUrl);
+      const arrayBuf = await response.arrayBuffer();
+      const base64 = Buffer.from(arrayBuf).toString('base64');
+
+      const filename = `photo_${Date.now()}.jpg`;
+      const { status, body } = await attnPost('/send-file', {
+        to: PI_ADDRESS,
+        filename,
+        data: base64,
+      });
+
+      if (status === 200) {
+        await ctx.api.editMessageText(ack.chat.id, ack.message_id,
+          '📤 Photo sent to pi\nID: <code>' + body.id + '</code>',
+          { parse_mode: 'HTML' });
+      } else {
+        await ctx.api.editMessageText(ack.chat.id, ack.message_id,
+          '❌ ' + (body.error || 'Upload failed'), { parse_mode: 'HTML' });
+      }
+    } catch (e) {
+      await ctx.api.editMessageText(ack.chat.id, ack.message_id,
+        '❌ ' + e.message, { parse_mode: 'HTML' });
+    }
+  });
+
+  // Document handler
+  bot.on('message:document', async (ctx) => {
+    if (ctx.from.id !== SUPERUSER) return ctx.reply('Access denied.');
+
+    const doc = ctx.message.document;
+    const filename = doc.file_name || `document_${Date.now()}`;
+    const ack = await ctx.reply('📎 Downloading ' + filename + '...');
+
+    try {
+      const file = await ctx.api.getFile(doc.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
+
+      const response = await fetch(fileUrl);
+      const arrayBuf = await response.arrayBuffer();
+      const base64 = Buffer.from(arrayBuf).toString('base64');
+
+      const { status, body } = await attnPost('/send-file', {
+        to: PI_ADDRESS,
+        filename,
+        data: base64,
+      });
+
+      if (status === 200) {
+        await ctx.api.editMessageText(ack.chat.id, ack.message_id,
+          '📤 ' + escapeHtml(filename) + ' sent to pi\nID: <code>' + body.id + '</code>',
+          { parse_mode: 'HTML' });
+      } else {
+        await ctx.api.editMessageText(ack.chat.id, ack.message_id,
+          '❌ ' + (body.error || 'Upload failed'), { parse_mode: 'HTML' });
+      }
+    } catch (e) {
+      await ctx.api.editMessageText(ack.chat.id, ack.message_id,
+        '❌ ' + e.message, { parse_mode: 'HTML' });
+    }
+  });
+
   // ALL text messages from superuser forwarded to pi (no prefix filter)
   bot.on("message:text", async (ctx) => {
     if (ctx.from.id !== SUPERUSER) return ctx.reply("Access denied.");

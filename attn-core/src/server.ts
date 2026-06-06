@@ -5,6 +5,7 @@ import {
   encryptMessage,
   signEnvelope,
   decryptMessage,
+  encryptBinary,
 } from './crypto.js';
 import {
   saveMessage,
@@ -184,6 +185,111 @@ async function handleRequest(
       });
 
       return sendJson(res, { id, status: 'sent' });
+    }
+
+    // POST /send-file — { to, filename, data: base64-encoded bytes }
+    if (req.method === 'POST' && path === '/send-file') {
+      const body = await parseBody(req);
+      const { to, filename, data } = JSON.parse(body) as {
+        to: string;
+        filename: string;
+        data: string;
+      };
+
+      if (!to || !filename || !data) {
+        return sendError(res, 'to, filename, and data are required');
+      }
+
+      if (!isRelayReady()) {
+        return sendError(res, 'Not connected to relay', 503);
+      }
+
+      // Resolve .attn name via HTTP if needed
+      let resolvedTo = to;
+      if (!to.startsWith('0x')) {
+        const label = to.toLowerCase().replace(/\.attn$/, '');
+        try {
+          const httpRes = await fetch(
+            `https://attn.s0nderlabs.xyz/resolve?name=${label}`,
+          );
+          if (httpRes.ok) {
+            const resData = (await httpRes.json()) as { address?: string };
+            if (resData.address) {
+              resolvedTo = resData.address;
+            }
+          }
+        } catch {
+          // HTTP resolution failed
+        }
+        if (resolvedTo === to) {
+          return sendError(
+            res,
+            `Could not resolve .attn name "${to}"`,
+            404,
+          );
+        }
+      }
+
+      const publicKey = await requestKey(resolvedTo);
+      if (!publicKey) {
+        return sendError(
+          res,
+          `Could not find public key for ${to}`,
+          404,
+        );
+      }
+
+      // Decode base64 → encrypt binary
+      const fileBuffer = Buffer.from(data, 'base64');
+      const encrypted = encryptBinary(publicKey, fileBuffer);
+
+      // Generate file key and upload to relay
+      const fileKey = crypto.randomUUID();
+      const timestamp = Date.now().toString();
+      const method = 'POST';
+      const uploadPath = '/upload';
+      const authMessage = `${method}:${uploadPath}:${timestamp}`;
+      const signature = await state.account!.signMessage({
+        message: authMessage,
+      });
+
+      const uploadRes = await fetch('https://attn.s0nderlabs.xyz/upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-Attn-Address': state.address,
+          'X-Attn-Timestamp': timestamp,
+          'X-Attn-Signature': signature,
+          'X-File-Key': fileKey,
+        },
+        body: Buffer.from(encrypted),
+      });
+
+      if (!uploadRes.ok) {
+        const errText = await uploadRes.text();
+        return sendError(res, `Upload failed: ${errText}`, 502);
+      }
+
+      // Send file message via relay WebSocket
+      const id = crypto.randomUUID();
+      const fileUrl = `https://attn.s0nderlabs.xyz/files/${fileKey}`;
+
+      try {
+        state.relayWs!.send(
+          JSON.stringify({
+            type: 'file',
+            id,
+            to: resolvedTo.toLowerCase(),
+            url: fileUrl,
+            key: fileKey,
+            filename,
+          }),
+        );
+      } catch {
+        return sendError(res, 'Failed to send file message via relay', 502);
+      }
+
+      return sendJson(res, { id, url: fileUrl, key: fileKey, filename, status: 'sent' });
     }
 
     // GET /peers
