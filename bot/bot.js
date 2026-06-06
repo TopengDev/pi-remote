@@ -116,8 +116,17 @@ async function main() {
       });
 
       if (status === 200) {
+        let statusText = '📤 Photo sent to pi';
+        if (ctx.message.caption) {
+          statusText += '\n📝 Caption: ' + ctx.message.caption;
+          // Forward caption as separate text message
+          attnPost('/send', {
+            to: PI_ADDRESS,
+            message: ctx.message.caption,
+          }).catch(() => {});
+        }
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
-          '📤 Photo sent to pi\nID: <code>' + body.id + '</code>',
+          statusText + '\nID: <code>' + body.id + '</code>',
           { parse_mode: 'HTML' });
       } else {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
@@ -152,8 +161,13 @@ async function main() {
       });
 
       if (status === 200) {
+        let statusText = '📤 ' + escapeHtml(filename) + ' sent to pi';
+        if (ctx.message.caption) {
+          statusText += '\n📝 Caption: ' + ctx.message.caption;
+          attnPost('/send', { to: PI_ADDRESS, message: ctx.message.caption }).catch(() => {});
+        }
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
-          '📤 ' + escapeHtml(filename) + ' sent to pi\nID: <code>' + body.id + '</code>',
+          statusText + '\nID: <code>' + body.id + '</code>',
           { parse_mode: 'HTML' });
       } else {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
