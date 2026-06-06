@@ -388,7 +388,7 @@ export function connectToRelay(
                 if (isVoice) {
                   try {
                     const { OggOpusDecoder } = await import('ogg-opus-decoder');
-                    const decoder = new OggOpusDecoder({ sampleRate: 16000 });
+                    const decoder = new OggOpusDecoder();
                     await decoder.ready;
                     const { channelData } = await decoder.decodeFile(decrypted);
                     decoder.free();
