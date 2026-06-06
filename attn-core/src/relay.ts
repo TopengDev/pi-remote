@@ -424,7 +424,8 @@ export function connectToRelay(
                                !parsed.file.filename?.startsWith('voice_');
                 if (isImage) {
                   try {
-                    const Tesseract = await import('tesseract.js');
+                    const TesseractMod = await import('tesseract.js');
+                    const Tesseract = TesseractMod.default || TesseractMod;
                     const { data: { text } } = await Tesseract.recognize(savePath, 'eng+ind');
                     const ocrText = text.trim();
                     if (ocrText && ocrText.length > 5) {
