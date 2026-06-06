@@ -84,7 +84,7 @@ let whisperPipeline: any = null;
 async function getWhisperPipeline(): Promise<any> {
   if (!whisperPipeline) {
     const { pipeline } = await import('@xenova/transformers');
-    whisperPipeline = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small.en');
+    whisperPipeline = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small');
     process.stderr.write('attn: whisper pipeline initialized\n');
   }
   return whisperPipeline;
