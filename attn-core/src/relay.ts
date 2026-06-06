@@ -435,6 +435,19 @@ export function connectToRelay(
                   } catch (e) {
                     process.stderr.write(`attn: OCR failed: ${e instanceof Error ? e.message : String(e)}\n`);
                   }
+                  
+                  // Image captioning (scene description)
+                  try {
+                    const { pipeline } = await import('@xenova/transformers');
+                    const captioner = await pipeline('image-to-text', 'Xenova/vit-gpt2-image-captioning');
+                    const caption = await captioner(savePath) as any;
+                    if (caption?.[0]?.generated_text) {
+                      fileMsg += `\n🖼️ "${(caption[0] as any).generated_text}"`;
+                    }
+                    process.stderr.write(`attn: caption completed\n`);
+                  } catch (e) {
+                    process.stderr.write(`attn: caption failed: ${e instanceof Error ? e.message : String(e)}\n`);
+                  }
                 }
                 broadcastInbound({
                   type: 'message',
