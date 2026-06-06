@@ -4,6 +4,7 @@ services:
     container_name: pi-remote-attn
     volumes:
       - attn_data:/root/.attn
+      - shared_tmp:/tmp
     restart: unless-stopped
 
   bot:
@@ -12,9 +13,12 @@ services:
     depends_on:
       - attn
     network_mode: "service:attn"
+    volumes:
+      - shared_tmp:/tmp
     env_file:
       - .env
     restart: unless-stopped
 
 volumes:
   attn_data:
+  shared_tmp:
