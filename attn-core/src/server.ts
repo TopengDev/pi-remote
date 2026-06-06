@@ -270,23 +270,39 @@ async function handleRequest(
         return sendError(res, `Upload failed: ${errText}`, 502);
       }
 
-      // Send file message via relay WebSocket
+      // Send file metadata as encrypted message via relay (type: 'message' only)
       const id = crypto.randomUUID();
       const fileUrl = `https://attn.s0nderlabs.xyz/files/${fileKey}`;
+      const fileMetadata = JSON.stringify({
+        file: { url: fileUrl, key: fileKey, filename },
+      });
+      const encrypted = encryptMessage(publicKey, fileMetadata);
+      const envelope = {
+        id,
+        to: resolvedTo.toLowerCase(),
+        encrypted,
+      };
+      const signature = await signEnvelope(state.account!, envelope);
 
       try {
         state.relayWs!.send(
           JSON.stringify({
-            type: 'file',
+            type: 'message',
             id,
             to: resolvedTo.toLowerCase(),
-            url: fileUrl,
-            key: fileKey,
-            filename,
+            encrypted,
+            signature,
           }),
         );
       } catch {
-        return sendError(res, 'Failed to send file message via relay', 502);
+        saveOutbox({
+          id,
+          to_address: resolvedTo.toLowerCase(),
+          encrypted,
+          signature,
+          ts: Date.now(),
+        });
+        return sendJson(res, { id, url: fileUrl, key: fileKey, filename, status: 'queued' });
       }
 
       return sendJson(res, { id, url: fileUrl, key: fileKey, filename, status: 'sent' });

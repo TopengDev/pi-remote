@@ -350,6 +350,36 @@ export function connectToRelay(
             ts: new Date(msg.ts).toISOString(),
           });
           ws.send(JSON.stringify({ type: 'ack', id: msg.id }));
+
+          // Check if this is a file reference (JSON with "file" key)
+          try {
+            const parsed = JSON.parse(plaintext);
+            if (parsed.file && parsed.file.url && parsed.file.key) {
+              // Download encrypted file from relay
+              const downloadUrl = `https://attn.s0nderlabs.xyz/files/${parsed.file.key}`;
+              const fileRes = await fetch(downloadUrl);
+              if (fileRes.ok) {
+                const encryptedData = new Uint8Array(await fileRes.arrayBuffer());
+                const decrypted = decryptBinary(state.privateKey, encryptedData);
+                const savePath = join(tmpdir(), parsed.file.filename || `file_${Date.now()}`);
+                writeFileSync(savePath, decrypted);
+                broadcastInbound({
+                  type: 'file',
+                  from: msg.from,
+                  filename: parsed.file.filename,
+                  path: savePath,
+                  size: decrypted.length,
+                  id: msg.id,
+                  ts: msg.ts,
+                  agentName: agentName ?? undefined,
+                });
+                break;
+              }
+            }
+          } catch {
+            // Not valid JSON or not a file reference — treat as regular message
+          }
+
           onInbound(
             msg.from,
             plaintext,
