@@ -364,11 +364,9 @@ export function connectToRelay(
                 const savePath = join(tmpdir(), parsed.file.filename || `file_${Date.now()}`);
                 writeFileSync(savePath, decrypted);
                 broadcastInbound({
-                  type: 'file',
+                  type: 'message',
                   from: msg.from,
-                  filename: parsed.file.filename,
-                  path: savePath,
-                  size: decrypted.length,
+                  message: `📎 File received: ${parsed.file.filename} (${Math.round(decrypted.length / 1024)} KB)\nSaved to: ${savePath}`,
                   id: msg.id,
                   ts: msg.ts,
                   agentName: agentName ?? undefined,
