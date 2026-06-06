@@ -3,9 +3,10 @@ import type { RawData } from 'ws';
 import { state, isRelayReady } from './state.js';
 import { decryptMessage, verifyEnvelope, decryptBinary } from './crypto.js';
 import { broadcastInbound } from './server.js';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execSync } from 'node:child_process';
 import { saveMessage, isContact, isBlocked, getContactName, savePending, hasPendingNotified, markPendingNotified, getOutbox, deleteOutbox, incrementOutboxAttempts, saveKeyCache, getKeyCache, saveReaction, updateContactName } from './db.js';
 
 // --- Types (same protocol as upstream) ---
@@ -385,6 +386,11 @@ export function connectToRelay(
                 const isVoice = parsed.file.type === 'voice' ||
                                 parsed.file.filename?.endsWith('.ogg') ||
                                 parsed.file.filename?.startsWith('voice_');
+                // Track voice sender for TTS reply
+                if (parsed.file.type === 'voice') {
+                  state.lastVoiceSender = msg.from;
+                }
+
                 if (isVoice) {
                   try {
                     const { OggOpusDecoder } = await import('ogg-opus-decoder');
@@ -419,6 +425,12 @@ export function connectToRelay(
                   id: msg.id,
                   ts: msg.ts,
                   agentName: agentName ?? undefined,
+                  file: {
+                    path: savePath,
+                    filename: parsed.file.filename,
+                    size: decrypted.length,
+                    type: parsed.file.type || null,
+                  },
                 });
                 break;
               }
@@ -617,6 +629,43 @@ export function connectToRelay(
       );
     }
   });
+}
+
+// --- TTS (Text-to-Speech) via Windows System.Speech ---
+
+const TTS_TMP_DIR = join(tmpdir(), 'attn-tts');
+
+export function generateTTS(text: string): string {
+  // Escape single quotes in text for PowerShell
+  const escaped = text.replace(/'/g, "''");
+  // Sanitize for filename
+  const filename = `tts_${Date.now()}.wav`;
+  const wavPath = join(TTS_TMP_DIR, filename);
+
+  // Ensure temp dir exists
+  try {
+    if (!existsSync(TTS_TMP_DIR)) {
+      execSync(`mkdir "${TTS_TMP_DIR}"`, { stdio: 'pipe' });
+    }
+  } catch {
+    // ignore
+  }
+
+  const psCmd = `Add-Type -AssemblyName System.Speech; ` +
+    `$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; ` +
+    `$s.SelectVoice('Microsoft Zira Desktop'); ` +
+    `$s.SetOutputToWaveFile('${wavPath.replace(/'/g, "''")}'); ` +
+    `$s.Speak('${escaped}'); ` +
+    `$s.Dispose()`;
+
+  execSync(`powershell -Command "${psCmd}"`, { stdio: 'pipe', timeout: 30000 });
+
+  if (!existsSync(wavPath)) {
+    throw new Error('TTS WAV file was not created');
+  }
+
+  process.stderr.write(`attn: TTS generated ${readFileSync(wavPath).length} bytes\n`);
+  return wavPath;
 }
 
 // --- Outbox ---

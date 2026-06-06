@@ -47,6 +47,24 @@ function connectAttnWs(bot) {
         const msg = JSON.parse(raw.toString());
         if (msg.type === "status" && msg.address) daemonAddress = msg.address;
         if (msg.type === "message") {
+          // If this is a voice_reply file, send audio to TG
+          if (msg.file && msg.file.type === 'voice_reply' && msg.file.path) {
+            const fs = require('fs');
+            if (fs.existsSync(msg.file.path)) {
+              const { InputFile } = require('grammy');
+              bot.api.sendAudio(SUPERUSER, new InputFile(msg.file.path), {
+                title: 'Voice Reply',
+                performer: 'pi',
+              }).catch((e) => console.error('[attn-ws] sendAudio failed:', e.message));
+              // Also send text version
+              const text = msg.message || "";
+              if (text) {
+                const tgMsg = "<b>📥 pi (voice reply)</b>\n<code>" + escapeHtml(text) + "</code>";
+                bot.api.sendMessage(SUPERUSER, tgMsg, { parse_mode: "HTML" }).catch(() => {});
+              }
+              return;
+            }
+          }
           const text = msg.message || "";
           const agentName = msg.agentName || msg.from || "";
           const tgMsg = "<b>📥 pi</b>\n<code>" + escapeHtml(text) + "</code>";

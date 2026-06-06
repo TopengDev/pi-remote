@@ -17,7 +17,8 @@ import {
   getKeyCache,
   saveOutbox,
 } from './db.js';
-import { requestKey, requestPresence } from './relay.js';
+import { requestKey, requestPresence, generateTTS } from './relay.js';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { DAEMON_PORT } from './constants.js';
 import { handleRegisterName, handleLookup } from './attn-names.js';
 
@@ -74,6 +75,83 @@ function sendError(
   status = 400,
 ): void {
   sendJson(res, { error: message }, status);
+}
+
+// --- Shared file upload + send logic ---
+
+async function sendFileDirect(
+  recipientAddress: string,
+  recipientPublicKey: string,
+  fileBuffer: Buffer,
+  filename: string,
+  fileType: string,
+  caption?: string,
+): Promise<{ id: string; url: string; key: string }> {
+  const fileEncrypted = encryptBinary(recipientPublicKey, fileBuffer);
+
+  // Upload to relay
+  const fileKey = crypto.randomUUID();
+  const timestamp = Date.now().toString();
+  const method = 'POST';
+  const uploadPath = '/upload';
+  const authMessage = `${method}:${uploadPath}:${timestamp}`;
+  const uploadSig = await state.account!.signMessage({
+    message: authMessage,
+  });
+
+  const uploadRes = await fetch('https://attn.s0nderlabs.xyz/upload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-Attn-Address': state.address,
+      'X-Attn-Timestamp': timestamp,
+      'X-Attn-Signature': uploadSig,
+      'X-File-Key': fileKey,
+    },
+    body: Buffer.from(fileEncrypted),
+  });
+
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text();
+    throw new Error(`Upload failed: ${errText}`);
+  }
+
+  // Send file metadata as encrypted message
+  const id = crypto.randomUUID();
+  const fileUrl = `https://attn.s0nderlabs.xyz/files/${fileKey}`;
+  const fileMetadata = JSON.stringify({
+    file: { url: fileUrl, key: fileKey, filename, caption: caption || null, type: fileType },
+  });
+  const encrypted = encryptMessage(recipientPublicKey, fileMetadata);
+  const envelope = {
+    id,
+    to: recipientAddress.toLowerCase(),
+    encrypted,
+  };
+  const signature = await signEnvelope(state.account!, envelope);
+
+  try {
+    state.relayWs!.send(
+      JSON.stringify({
+        type: 'message',
+        id,
+        to: recipientAddress.toLowerCase(),
+        encrypted,
+        signature,
+      }),
+    );
+  } catch {
+    saveOutbox({
+      id,
+      to_address: recipientAddress.toLowerCase(),
+      encrypted,
+      signature,
+      ts: Date.now(),
+    });
+    throw new Error('Relay disconnected, message queued');
+  }
+
+  return { id, url: fileUrl, key: fileKey };
 }
 
 async function handleRequest(
@@ -184,6 +262,25 @@ async function handleRequest(
         ts: new Date().toISOString(),
       });
 
+      // If replying to a voice note sender, also send TTS voice reply
+      const wasVoiceReply = state.lastVoiceSender && resolvedTo.toLowerCase() === state.lastVoiceSender.toLowerCase();
+      if (wasVoiceReply) {
+        state.lastVoiceSender = null; // Clear so subsequent replies don't trigger TTS
+        // Fire-and-forget: don't block the text response
+        (async () => {
+          try {
+            const wavPath = generateTTS(message);
+            const wavBuf = readFileSync(wavPath);
+            const wavBase64 = wavBuf.toString('base64');
+            await sendFileDirect(resolvedTo, publicKey, wavBuf, `tts_reply_${Date.now()}.wav`, 'voice_reply');
+            try { unlinkSync(wavPath); } catch { /* cleanup best-effort */ }
+            process.stderr.write(`attn: TTS voice reply sent to ${resolvedTo}\n`);
+          } catch (err) {
+            process.stderr.write(`attn: TTS voice reply failed: ${err instanceof Error ? err.message : String(err)}\n`);
+          }
+        })();
+      }
+
       return sendJson(res, { id, status: 'sent' });
     }
 
@@ -241,73 +338,16 @@ async function handleRequest(
         );
       }
 
-      // Decode base64 → encrypt binary
+      // Decode base64 → send via shared helper
       const fileBuffer = Buffer.from(data, 'base64');
-      const fileEncrypted = encryptBinary(publicKey, fileBuffer);
-
-      // Generate file key and upload to relay
-      const fileKey = crypto.randomUUID();
-      const timestamp = Date.now().toString();
-      const method = 'POST';
-      const uploadPath = '/upload';
-      const authMessage = `${method}:${uploadPath}:${timestamp}`;
-      const uploadSig = await state.account!.signMessage({
-        message: authMessage,
-      });
-
-      const uploadRes = await fetch('https://attn.s0nderlabs.xyz/upload', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'X-Attn-Address': state.address,
-          'X-Attn-Timestamp': timestamp,
-          'X-Attn-Signature': uploadSig,
-          'X-File-Key': fileKey,
-        },
-        body: Buffer.from(fileEncrypted),
-      });
-
-      if (!uploadRes.ok) {
-        const errText = await uploadRes.text();
-        return sendError(res, `Upload failed: ${errText}`, 502);
-      }
-
-      // Send file metadata as encrypted message via relay (type: 'message' only)
-      const id = crypto.randomUUID();
-      const fileUrl = `https://attn.s0nderlabs.xyz/files/${fileKey}`;
-      const fileMetadata = JSON.stringify({
-        file: { url: fileUrl, key: fileKey, filename, caption: caption || null, type: type || null },
-      });
-      const encrypted = encryptMessage(publicKey, fileMetadata);
-      const envelope = {
-        id,
-        to: resolvedTo.toLowerCase(),
-        encrypted,
-      };
-      const signature = await signEnvelope(state.account!, envelope);
 
       try {
-        state.relayWs!.send(
-          JSON.stringify({
-            type: 'message',
-            id,
-            to: resolvedTo.toLowerCase(),
-            encrypted,
-            signature,
-          }),
-        );
-      } catch {
-        saveOutbox({
-          id,
-          to_address: resolvedTo.toLowerCase(),
-          encrypted,
-          signature,
-          ts: Date.now(),
-        });
-        return sendJson(res, { id, url: fileUrl, key: fileKey, filename, status: 'queued' });
+        const result = await sendFileDirect(resolvedTo, publicKey, fileBuffer, filename, type || 'file', caption);
+        return sendJson(res, { id: result.id, url: result.url, key: result.key, filename, status: 'sent' });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return sendError(res, `Upload failed: ${msg}`, 502);
       }
-
-      return sendJson(res, { id, url: fileUrl, key: fileKey, filename, status: 'sent' });
     }
 
     // GET /peers
