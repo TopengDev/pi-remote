@@ -184,12 +184,32 @@ async function main() {
     if (ctx.from.id !== SUPERUSER) return ctx.reply("Access denied.");
 
     const text = ctx.message.text.trim();
+    
+    // Build message with reply context
+    let fullText = text;
+    if (ctx.message.reply_to_message) {
+      const reply = ctx.message.reply_to_message;
+      let quoted = '';
+      if (reply.text) {
+        quoted = reply.text.substring(0, 200);
+      } else if (reply.caption) {
+        quoted = '[photo] ' + reply.caption.substring(0, 200);
+      } else if (reply.photo) {
+        quoted = '[photo]';
+      } else if (reply.document) {
+        quoted = '[file: ' + (reply.document.file_name || 'unknown') + ']';
+      } else {
+        quoted = '[message]';
+      }
+      fullText = '↪️ Replying to: "' + quoted + '"\n' + text;
+    }
+
     const ack = await ctx.reply("📤 <code>" + escapeHtml(text) + "</code>...", { parse_mode: "HTML" });
 
     try {
       const { status, body } = await attnPost("/send", {
         to: PI_ADDRESS,
-        message: text,
+        message: fullText,
       });
       if (status === 200 && body.status === "sent") {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
