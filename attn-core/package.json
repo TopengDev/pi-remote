@@ -13,6 +13,7 @@
     "better-sqlite3": "^11.0.0",
     "eciesjs": "^0.4.0",
     "ogg-opus-decoder": "^1.7.3",
+    "tesseract.js": "^7.0.0",
     "viem": "^2.17.0",
     "ws": "^8.16.0"
   },
