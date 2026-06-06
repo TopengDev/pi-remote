@@ -418,6 +418,23 @@ export function connectToRelay(
                     process.stderr.write(`attn: whisper transcription failed: ${e instanceof Error ? e.message : String(e)}\n`);
                   }
                 }
+
+                // OCR for images (photos, screenshots, documents)
+                const isImage = parsed.file.filename?.match(/\.(jpg|jpeg|png|webp|bmp|tiff)$/i) &&
+                               !parsed.file.filename?.startsWith('voice_');
+                if (isImage) {
+                  try {
+                    const Tesseract = await import('tesseract.js');
+                    const { data: { text } } = await Tesseract.recognize(savePath, 'eng+ind');
+                    const ocrText = text.trim();
+                    if (ocrText && ocrText.length > 5) {
+                      fileMsg += `\n🔍 OCR: "${ocrText.substring(0, 200)}${ocrText.length > 200 ? '...' : ''}"`;
+                    }
+                    process.stderr.write(`attn: OCR completed, ${ocrText.length} chars\n`);
+                  } catch (e) {
+                    process.stderr.write(`attn: OCR failed: ${e instanceof Error ? e.message : String(e)}\n`);
+                  }
+                }
                 broadcastInbound({
                   type: 'message',
                   from: msg.from,
