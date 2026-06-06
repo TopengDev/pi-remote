@@ -363,10 +363,15 @@ export function connectToRelay(
                 const decrypted = decryptBinary(state.privateKey, encryptedData);
                 const savePath = join(tmpdir(), parsed.file.filename || `file_${Date.now()}`);
                 writeFileSync(savePath, decrypted);
+                const sizeKB = Math.round(decrypted.length / 1024);
+                let fileMsg = `📎 File received: ${parsed.file.filename} (${sizeKB} KB)\nSaved to: ${savePath}`;
+                if (parsed.file.caption) {
+                  fileMsg += `\n📝 ${parsed.file.caption}`;
+                }
                 broadcastInbound({
                   type: 'message',
                   from: msg.from,
-                  message: `📎 File received: ${parsed.file.filename} (${Math.round(decrypted.length / 1024)} KB)\nSaved to: ${savePath}`,
+                  message: fileMsg,
                   id: msg.id,
                   ts: msg.ts,
                   agentName: agentName ?? undefined,

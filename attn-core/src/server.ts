@@ -190,10 +190,11 @@ async function handleRequest(
     // POST /send-file — { to, filename, data: base64-encoded bytes }
     if (req.method === 'POST' && path === '/send-file') {
       const body = await parseBody(req);
-      const { to, filename, data } = JSON.parse(body) as {
+      const { to, filename, data, caption } = JSON.parse(body) as {
         to: string;
         filename: string;
         data: string;
+        caption?: string;
       };
 
       if (!to || !filename || !data) {
@@ -274,7 +275,7 @@ async function handleRequest(
       const id = crypto.randomUUID();
       const fileUrl = `https://attn.s0nderlabs.xyz/files/${fileKey}`;
       const fileMetadata = JSON.stringify({
-        file: { url: fileUrl, key: fileKey, filename },
+        file: { url: fileUrl, key: fileKey, filename, caption: caption || null },
       });
       const encrypted = encryptMessage(publicKey, fileMetadata);
       const envelope = {

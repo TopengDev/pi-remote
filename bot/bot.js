@@ -113,20 +113,12 @@ async function main() {
         to: PI_ADDRESS,
         filename,
         data: base64,
+        caption: ctx.message.caption || undefined,
       });
 
       if (status === 200) {
-        let statusText = '📤 Photo sent to pi';
-        if (ctx.message.caption) {
-          statusText += '\n📝 Caption: ' + ctx.message.caption;
-          // Forward caption as separate text message
-          attnPost('/send', {
-            to: PI_ADDRESS,
-            message: ctx.message.caption,
-          }).catch(() => {});
-        }
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
-          statusText + '\nID: <code>' + body.id + '</code>',
+          '📤 Photo sent to pi' + (ctx.message.caption ? ' \n📝 ' + ctx.message.caption : '') + '\nID: <code>' + body.id + '</code>',
           { parse_mode: 'HTML' });
       } else {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
@@ -158,16 +150,12 @@ async function main() {
         to: PI_ADDRESS,
         filename,
         data: base64,
+        caption: ctx.message.caption || undefined,
       });
 
       if (status === 200) {
-        let statusText = '📤 ' + escapeHtml(filename) + ' sent to pi';
-        if (ctx.message.caption) {
-          statusText += '\n📝 Caption: ' + ctx.message.caption;
-          attnPost('/send', { to: PI_ADDRESS, message: ctx.message.caption }).catch(() => {});
-        }
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
-          statusText + '\nID: <code>' + body.id + '</code>',
+          '📤 ' + escapeHtml(filename) + ' sent to pi' + (ctx.message.caption ? ' \n📝 ' + ctx.message.caption : '') + '\nID: <code>' + body.id + '</code>',
           { parse_mode: 'HTML' });
       } else {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
