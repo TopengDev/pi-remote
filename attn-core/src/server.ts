@@ -241,7 +241,7 @@ async function handleRequest(
 
       // Decode base64 → encrypt binary
       const fileBuffer = Buffer.from(data, 'base64');
-      const encrypted = encryptBinary(publicKey, fileBuffer);
+      const fileEncrypted = encryptBinary(publicKey, fileBuffer);
 
       // Generate file key and upload to relay
       const fileKey = crypto.randomUUID();
@@ -249,7 +249,7 @@ async function handleRequest(
       const method = 'POST';
       const uploadPath = '/upload';
       const authMessage = `${method}:${uploadPath}:${timestamp}`;
-      const signature = await state.account!.signMessage({
+      const uploadSig = await state.account!.signMessage({
         message: authMessage,
       });
 
@@ -259,10 +259,10 @@ async function handleRequest(
           'Content-Type': 'application/octet-stream',
           'X-Attn-Address': state.address,
           'X-Attn-Timestamp': timestamp,
-          'X-Attn-Signature': signature,
+          'X-Attn-Signature': uploadSig,
           'X-File-Key': fileKey,
         },
-        body: Buffer.from(encrypted),
+        body: Buffer.from(fileEncrypted),
       });
 
       if (!uploadRes.ok) {
