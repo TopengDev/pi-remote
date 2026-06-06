@@ -56,12 +56,22 @@ function connectAttnWs(bot) {
                 title: 'Voice Reply',
                 performer: 'pi',
               }).catch((e) => console.error('[attn-ws] sendAudio failed:', e.message));
-              // Also send text version
               const text = msg.message || "";
               if (text) {
                 const tgMsg = "<b>📥 pi (voice reply)</b>\n<code>" + escapeHtml(text) + "</code>";
                 bot.api.sendMessage(SUPERUSER, tgMsg, { parse_mode: "HTML" }).catch(() => {});
               }
+              return;
+            }
+          }
+          // Forward any other files as documents
+          if (msg.file && msg.file.path) {
+            const fs = require('fs');
+            if (fs.existsSync(msg.file.path)) {
+              const { InputFile } = require('grammy');
+              bot.api.sendDocument(SUPERUSER, new InputFile(msg.file.path), {
+                caption: msg.message || msg.file.filename || '',
+              }).catch((e) => console.error('[attn-ws] sendDocument failed:', e.message));
               return;
             }
           }
