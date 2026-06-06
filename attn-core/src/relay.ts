@@ -388,12 +388,12 @@ export function connectToRelay(
                 if (isVoice) {
                   try {
                     const { OggOpusDecoder } = await import('ogg-opus-decoder');
-                    const decoder = new OggOpusDecoder();
+                    const decoder = new OggOpusDecoder({ sampleRate: 16000 });
                     await decoder.ready;
                     const { channelData } = await decoder.decodeFile(decrypted);
                     decoder.free();
                     const transcriber = await getWhisperPipeline();
-                    const result = await transcriber({ sampling_rate: 48000, raw: channelData[0] });
+                    const result = await transcriber(channelData[0]);
                     fileMsg += `\n🎤 "${result.text}"`;
                   } catch (e) {
                     process.stderr.write(`attn: whisper transcription failed: ${e instanceof Error ? e.message : String(e)}\n`);
