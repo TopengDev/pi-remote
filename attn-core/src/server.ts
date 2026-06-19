@@ -225,6 +225,27 @@ async function handleRequest(
         );
       }
 
+      // Self-send: deliver locally without going through the relay
+      if (resolvedTo.toLowerCase() === state.address.toLowerCase()) {
+        const selfId = crypto.randomUUID();
+        const selfTs = Date.now();
+        saveMessage({
+          id: selfId,
+          peer: to,
+          direction: 'outbound',
+          content: message,
+          ts: new Date(selfTs).toISOString(),
+        });
+        broadcastInbound({
+          type: 'message',
+          from: state.address,
+          message,
+          id: selfId,
+          ts: selfTs,
+        });
+        return sendJson(res, { id: selfId, status: 'sent' });
+      }
+
       const encrypted = encryptMessage(publicKey, message);
       const id = crypto.randomUUID();
       const envelope = {

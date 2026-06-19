@@ -40,6 +40,9 @@ function attnPost(path, body) {
 function connectAttnWs(bot) {
   const WebSocket = require("ws");
   let ws, daemonAddress = "unknown";
+  const sentIds = new Set(); // track IDs we sent to prevent echo
+  const recentSent = new Map(); // content → timestamp for content-based dedup
+  const DEDUP_WINDOW_MS = 10000; // 10s window for content dedup
 
   function connect() {
     ws = new WebSocket("ws://127.0.0.1:" + ATTN_PORT + "/?session=main");
@@ -49,8 +52,18 @@ function connectAttnWs(bot) {
         const msg = JSON.parse(raw.toString());
         if (msg.type === "status" && msg.address) daemonAddress = msg.address;
         if (msg.type === "message") {
-          const text = msg.message || "";
-          const agentName = msg.agentName || msg.from || "";
+          const text = (msg.message || "").trim();
+          // ID-based dedup
+          if (msg.id && sentIds.has(msg.id)) {
+            console.log("[attn-ws] Skipping echo (ID match): " + msg.id);
+            return;
+          }
+          // Content-based dedup for race condition (echo arrives before /send response)
+          const lastSent = recentSent.get(text);
+          if (lastSent && (Date.now() - lastSent) < DEDUP_WINDOW_MS) {
+            console.log("[attn-ws] Skipping echo (content match): " + text.substring(0, 50));
+            return;
+          }
           const tgMsg = "<b>📥 pi</b>\n<code>" + escapeHtml(text) + "</code>";
           bot.api.sendMessage(SUPERUSER, tgMsg, { parse_mode: "HTML" }).catch(() => {});
         }
@@ -60,7 +73,7 @@ function connectAttnWs(bot) {
     ws.on("error", () => {});
   }
   connect();
-  return { getAddress: () => daemonAddress };
+  return { getAddress: () => daemonAddress, sentIds, recentSent };
 }
 
 function escapeHtml(text) {
@@ -71,6 +84,8 @@ function escapeHtml(text) {
 async function main() {
   const bot = new Bot(TOKEN);
   const attn = connectAttnWs(bot);
+  const sentIds = attn.sentIds;
+  const recentSent = attn.recentSent;
 
   bot.command("start", async (ctx) => {
     if (ctx.from.id !== SUPERUSER) return ctx.reply("Access denied.");
@@ -213,12 +228,17 @@ async function main() {
 
     const ack = await ctx.reply("📤 <code>" + escapeHtml(text) + "</code>...", { parse_mode: "HTML" });
 
+    // Preemptively track content to beat the WS echo race
+    recentSent.set(fullText, Date.now());
+
     try {
       const { status, body } = await attnPost("/send", {
         to: PI_ADDRESS,
         message: fullText,
       });
       if (status === 200 && (body.status === "sent" || body.status === "received" || body.status === "delivered" || body.status === "unconfirmed")) {
+        sentIds.add(body.id);
+        console.log("[tg] Tracked sent ID: " + body.id);
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
           "✅ <code>" + escapeHtml(text) + "</code>\nID: <code>" + body.id + "</code>",
           { parse_mode: "HTML" });

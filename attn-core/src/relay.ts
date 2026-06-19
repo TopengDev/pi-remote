@@ -83,10 +83,18 @@ const keyTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 let whisperPipeline: any = null;
 
 async function getWhisperPipeline(): Promise<any> {
-  if (!whisperPipeline) {
-    const { pipeline } = await import('@xenova/transformers');
-    whisperPipeline = await pipeline('automatic-speech-recognition', 'Xenova/whisper-small');
-    process.stderr.write('attn: whisper pipeline initialized\n');
+  if (whisperPipeline === undefined) {
+    try {
+      // Use indirect eval to prevent Bun's bundler from resolving at compile time
+      const dynamicImport = new Function('specifier', 'return import(specifier)');
+      const mod = await dynamicImport('@xenova/transformers');
+      whisperPipeline = await mod.pipeline('automatic-speech-recognition', 'Xenova/whisper-small');
+      process.stderr.write('attn: whisper pipeline initialized\n');
+    } catch (e) {
+      process.stderr.write(`attn: whisper unavailable — ${e instanceof Error ? e.message : String(e)}\n`);
+      whisperPipeline = null;
+      return null;
+    }
   }
   return whisperPipeline;
 }

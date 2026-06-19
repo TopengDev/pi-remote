@@ -11,6 +11,9 @@ import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts';
 import { STATE_DIR_NAME, ENV_FILE_NAME } from './constants.js';
 
 export function getStateDir(): string {
+  if (process.env.ATTN_HOME) {
+    return process.env.ATTN_HOME;
+  }
   return join(homedir(), STATE_DIR_NAME);
 }
 
@@ -62,6 +65,18 @@ export function resolvePrivateKey(): `0x${string}` {
     return key as `0x${string}`;
   }
 
+  // 2.5. Load from key.hex file (Go daemon format)
+  try {
+    const keyHexPath = join(getStateDir(), 'key.hex');
+    const keyHex = readFileSync(keyHexPath, 'utf8').trim();
+    if (keyHex.startsWith('0x') && keyHex.length === 66) {
+      process.stderr.write(`attn: loaded identity from ${keyHexPath}\n`);
+      return keyHex as `0x${string}`;
+    }
+  } catch {
+    // key.hex doesn't exist — OK
+  }
+
   // 3. Generate new key
   const privateKey = generatePrivateKey();
   const account = privateKeyToAccount(privateKey);
@@ -101,6 +116,16 @@ export function getAddress(): string {
     const key = process.env.ATTN_PRIVATE_KEY;
     const pk = key.startsWith('0x') ? (key as `0x${string}`) : (`0x${key}` as `0x${string}`);
     return privateKeyToAccount(pk).address.toLowerCase();
+  }
+  // Fallback: read key.hex (Go daemon format)
+  try {
+    const keyHexPath = join(getStateDir(), 'key.hex');
+    const keyHex = readFileSync(keyHexPath, 'utf8').trim();
+    if (keyHex.startsWith('0x') && keyHex.length === 66) {
+      return privateKeyToAccount(keyHex as `0x${string}`).address.toLowerCase();
+    }
+  } catch {
+    // ignore
   }
   return '';
 }
