@@ -1,10 +1,12 @@
+
 const { Bot } = require("grammy");
 const http = require("http");
+const fs = require("fs");
 
 // Config
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const SUPERUSER = parseInt(process.env.SUPERUSER_TG_ID || "0", 10);
-const PI_ADDRESS = process.env.PI_ADDRESS || "0xe793d604d36b4a9f05b8167a85f80ffa888b6d91";
+const PI_ADDRESS = process.env.PI_ADDRESS || "0x25e18599b3804382c4a03c488196778bbffb77bc";
 const ATTN_PORT = 9742;
 
 if (!TOKEN) {
@@ -47,34 +49,6 @@ function connectAttnWs(bot) {
         const msg = JSON.parse(raw.toString());
         if (msg.type === "status" && msg.address) daemonAddress = msg.address;
         if (msg.type === "message") {
-          // If this is a voice_reply file, send audio to TG
-          if (msg.file && msg.file.type === 'voice_reply' && msg.file.path) {
-            const fs = require('fs');
-            if (fs.existsSync(msg.file.path)) {
-              const { InputFile } = require('grammy');
-              bot.api.sendAudio(SUPERUSER, new InputFile(msg.file.path), {
-                title: 'Voice Reply',
-                performer: 'pi',
-              }).catch((e) => console.error('[attn-ws] sendAudio failed:', e.message));
-              const text = msg.message || "";
-              if (text) {
-                const tgMsg = "<b>📥 pi (voice reply)</b>\n<code>" + escapeHtml(text) + "</code>";
-                bot.api.sendMessage(SUPERUSER, tgMsg, { parse_mode: "HTML" }).catch(() => {});
-              }
-              return;
-            }
-          }
-          // Forward any other files as documents
-          if (msg.file && msg.file.path) {
-            const fs = require('fs');
-            if (fs.existsSync(msg.file.path)) {
-              const { InputFile } = require('grammy');
-              bot.api.sendDocument(SUPERUSER, new InputFile(msg.file.path), {
-                caption: msg.message || msg.file.filename || '',
-              }).catch((e) => console.error('[attn-ws] sendDocument failed:', e.message));
-              return;
-            }
-          }
           const text = msg.message || "";
           const agentName = msg.agentName || msg.from || "";
           const tgMsg = "<b>📥 pi</b>\n<code>" + escapeHtml(text) + "</code>";
@@ -122,31 +96,25 @@ async function main() {
     } catch (e) { await ctx.reply("❌ attn daemon unreachable: " + e.message); }
   });
 
-  // Photo handler
+  // Photo handler — save to /tmp, send via /op/send_file
   bot.on('message:photo', async (ctx) => {
     if (ctx.from.id !== SUPERUSER) return ctx.reply('Access denied.');
-
     const ack = await ctx.reply('📎 Downloading photo...');
     try {
       const photo = ctx.message.photo[ctx.message.photo.length - 1];
       const file = await ctx.api.getFile(photo.file_id);
       const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
-
       const response = await fetch(fileUrl);
       const arrayBuf = await response.arrayBuffer();
-      const base64 = Buffer.from(arrayBuf).toString('base64');
-
+      const buf = Buffer.from(arrayBuf);
       const filename = `photo_${Date.now()}.jpg`;
-      const { status, body } = await attnPost('/send-file', {
-        to: PI_ADDRESS,
-        filename,
-        data: base64,
-        caption: ctx.message.caption || undefined,
-      });
-
-      if (status === 200) {
+      const filePath = `/tmp/${filename}`;
+      fs.writeFileSync(filePath, buf);
+      const { body } = await attnPost('/op/send_file', { to: PI_ADDRESS, path: filePath });
+      try { fs.unlinkSync(filePath); } catch {}
+      if (body.ok) {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
-          '📤 Photo sent to pi' + (ctx.message.caption ? ' \n📝 ' + ctx.message.caption : '') + '\nID: <code>' + body.id + '</code>',
+          '📤 Photo sent to pi' + (ctx.message.caption ? ' \n📝 ' + ctx.message.caption : '') + '\nID: <code>' + (body.data && body.data.id || '') + '</code>',
           { parse_mode: 'HTML' });
       } else {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
@@ -158,31 +126,25 @@ async function main() {
     }
   });
 
-  // Voice note handler
+  // Voice note handler — save to /tmp, send via /op/send_file
   bot.on('message:voice', async (ctx) => {
     if (ctx.from.id !== SUPERUSER) return ctx.reply('Access denied.');
-
     const ack = await ctx.reply('🎤 Downloading voice note...');
     try {
       const voice = ctx.message.voice;
       const file = await ctx.api.getFile(voice.file_id);
       const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
-
       const response = await fetch(fileUrl);
       const arrayBuf = await response.arrayBuffer();
-      const base64 = Buffer.from(arrayBuf).toString('base64');
-
+      const buf = Buffer.from(arrayBuf);
       const filename = `voice_${Date.now()}.ogg`;
-      const { status, body } = await attnPost('/send-file', {
-        to: PI_ADDRESS,
-        filename,
-        data: base64,
-        type: 'voice',
-      });
-
-      if (status === 200) {
+      const filePath = `/tmp/${filename}`;
+      fs.writeFileSync(filePath, buf);
+      const { body } = await attnPost('/op/send_file', { to: PI_ADDRESS, path: filePath });
+      try { fs.unlinkSync(filePath); } catch {}
+      if (body.ok) {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
-          '🎤 Voice note sent to pi\nID: <code>' + body.id + '</code>',
+          '🎤 Voice note sent to pi\nID: <code>' + (body.data && body.data.id || '') + '</code>',
           { parse_mode: 'HTML' });
       } else {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
@@ -194,32 +156,25 @@ async function main() {
     }
   });
 
-  // Document handler
+  // Document handler — save to /tmp, send via /op/send_file
   bot.on('message:document', async (ctx) => {
     if (ctx.from.id !== SUPERUSER) return ctx.reply('Access denied.');
-
     const doc = ctx.message.document;
     const filename = doc.file_name || `document_${Date.now()}`;
     const ack = await ctx.reply('📎 Downloading ' + filename + '...');
-
     try {
       const file = await ctx.api.getFile(doc.file_id);
       const fileUrl = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`;
-
       const response = await fetch(fileUrl);
       const arrayBuf = await response.arrayBuffer();
-      const base64 = Buffer.from(arrayBuf).toString('base64');
-
-      const { status, body } = await attnPost('/send-file', {
-        to: PI_ADDRESS,
-        filename,
-        data: base64,
-        caption: ctx.message.caption || undefined,
-      });
-
-      if (status === 200) {
+      const buf = Buffer.from(arrayBuf);
+      const filePath = `/tmp/${filename}`;
+      fs.writeFileSync(filePath, buf);
+      const { body } = await attnPost('/op/send_file', { to: PI_ADDRESS, path: filePath });
+      try { fs.unlinkSync(filePath); } catch {}
+      if (body.ok) {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
-          '📤 ' + escapeHtml(filename) + ' sent to pi' + (ctx.message.caption ? ' \n📝 ' + ctx.message.caption : '') + '\nID: <code>' + body.id + '</code>',
+          '📤 ' + escapeHtml(filename) + ' sent to pi' + (ctx.message.caption ? ' \n📝 ' + ctx.message.caption : '') + '\nID: <code>' + (body.data && body.data.id || '') + '</code>',
           { parse_mode: 'HTML' });
       } else {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
@@ -263,9 +218,13 @@ async function main() {
         to: PI_ADDRESS,
         message: fullText,
       });
-      if (status === 200 && body.status === "sent") {
+      if (status === 200 && (body.status === "sent" || body.status === "received" || body.status === "delivered" || body.status === "unconfirmed")) {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
           "✅ <code>" + escapeHtml(text) + "</code>\nID: <code>" + body.id + "</code>",
+          { parse_mode: "HTML" });
+      } else if (status === 200 && body.status === "queued") {
+        await ctx.api.editMessageText(ack.chat.id, ack.message_id,
+          "⚠️ Queued for delivery.\n<code>" + escapeHtml(text) + "</code>",
           { parse_mode: "HTML" });
       } else if (status === 503) {
         await ctx.api.editMessageText(ack.chat.id, ack.message_id,
@@ -286,3 +245,4 @@ async function main() {
 }
 
 main().catch((err) => { console.error("FATAL:", err); process.exit(1); });
+[?9001l[?1004l
