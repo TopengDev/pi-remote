@@ -245,4 +245,3 @@ async function main() {
 }
 
 main().catch((err) => { console.error("FATAL:", err); process.exit(1); });
-[?9001l[?1004l
